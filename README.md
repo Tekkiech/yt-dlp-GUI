@@ -62,6 +62,3 @@ yt-dlp GUI/
 - “yt-dlp not found”: install `yt-dlp` and ensure it’s on `PATH`.
 - Merge fails: verify FFmpeg on `PATH`.
 - Terminal too small: resize; viewport auto-resizes on `WindowSizeMsg`.
-
-## License
-MIT (if you add one; currently unspecified).
