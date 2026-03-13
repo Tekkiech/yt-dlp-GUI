@@ -50,7 +50,6 @@ yt-dlp GUI/
 - `versions/source/iter3/main.go`: (see file) incremental improvements.
 - `versions/source/iter4/main.go`: (see file) incremental improvements.
 - `versions/source/iter5/main.go`: (see file) incremental improvements.
-- `versions/source/final/main.go`: form-based UI (current design).
 
 ## Current entry point
 `main.go` matches `versions/source/final/main.go`:
