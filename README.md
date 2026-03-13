@@ -41,7 +41,7 @@ yt-dlp GUI/
 ├─ versions/
 │  ├─ source/
 │  │  ├─ iter1/…iter5/    # earlier source iterations
-│  │  └─ final/main.go    # final iteration source
+│  └─  └─ final/main.go    # final iteration source         # original binary snapshots
 ```
 
 ## Iteration history (source)
