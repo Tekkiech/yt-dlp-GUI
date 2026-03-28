@@ -90,33 +90,49 @@ sudo apt install -y yt-dlp ffmpeg libasound2-utils sox libcanberra-gtk-module li
 
 ## Building cross-platform binaries (examples)
 
-From a Linux or macOS machine with Go installed, you can cross-compile:
+This repository's main package is located at the repository root (there is no `./yt-dlp-GUI` subpackage). Build from the repo root (`.`). Example builds:
 
 - Build for Linux x86_64:
 ```sh
-GOOS=linux GOARCH=amd64 go build -o yt-dlp-gui-linux ./yt-dlp-GUI
+GOOS=linux GOARCH=amd64 go build -o yt-dlp-gui-linux .
 ```
 
 - Build for Windows x86_64:
 ```sh
-GOOS=windows GOARCH=amd64 go build -o yt-dlp-gui.exe ./yt-dlp-GUI
+GOOS=windows GOARCH=amd64 go build -o yt-dlp-gui.exe .
 ```
 
 - Build for macOS (native build or from macOS):
 ```sh
-go build -o yt-dlp-gui ./yt-dlp-GUI
+go build -o yt-dlp-gui .
 ```
 
 Notes:
-- The binary is pure Go and should cross-compile cleanly, but runtime behavior (like system sounds) depends on the target OS utilities.
+- Build from `.` (the repository root) — do not use `./yt-dlp-GUI` unless you move the entrypoint into that subdirectory.
+- The binary is pure Go and generally cross-compiles, but runtime behaviour (notifications, sounds, merge steps) depends on the target OS utilities being present.
 - When packaging, include a short README or installer notes that recommend installing `yt-dlp` and `ffmpeg`.
+
+Where to get builds
+- Stable releases: check this repository's "Releases" page for published release assets (these are intended to be stable binaries).
+- More up-to-date builds: check the "Actions" tab (GitHub Actions) for workflow runs — many workflows upload build artifacts for recent commits which you can download if you need a newer build than the latest release.
 
 ## CI: GitHub Actions
 
-A suggested CI workflow can build artifacts for macOS, Linux, and Windows. Add a `.github/workflows/build.yml` with a matrix for `GOOS`/`GOARCH` to produce release artifacts. The workflow should:
-- Run `go mod tidy`
-- Build for each target (linux, windows, darwin)
-- Upload build artifacts as part of the job outputs or release assets
+This repository already contains a workflow at `.github/workflows/build.yml`. At the moment the included workflow builds macOS binaries (matrix: `amd64`, `arm64`) on `macos-latest` and uploads the `dist` directory as artifacts.
+
+If you want a broader CI that produces cross-platform release assets, consider:
+- Expanding the workflow matrix to include `GOOS=linux` and `GOOS=windows` entries.
+- Running `go mod tidy` and then building the repository root package (`.`) for each target.
+- Using `actions/upload-artifact` for temporary artifacts and/or automating creation of GitHub Releases (via `actions/create-release` + `actions/upload-release-asset`) for stable release assets.
+- Optionally using tools like `goreleaser` to simplify packaging and creating release attachments.
+
+Where to obtain binaries from CI:
+- Stable releases: use GitHub Releases (release assets attached to version tags).
+- Latest or intermediate builds: use the Actions tab, find the workflow run for the commit or branch, and download the uploaded artifacts from that run.
+
+If you'd like, I can:
+- Add a short example workflow snippet that builds for linux/windows/darwin and uploads artifacts, or
+- Update the README to include direct links to Releases and Actions pages (or example commands to download artifacts) for convenience.
 
 ## License
 MIT (if you add one; currently unspecified).
