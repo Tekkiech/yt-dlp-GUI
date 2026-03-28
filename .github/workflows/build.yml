@@ -48,7 +48,7 @@ jobs:
           mkdir -p dist
           OUTPUT_NAME="yt-dlp-gui-darwin-${{ matrix.goarch }}"
           echo "Building ${OUTPUT_NAME}..."
-          env GOOS=darwin GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -o "dist/${OUTPUT_NAME}" ./yt-dlp-GUI
+          env GOOS=darwin GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -o "dist/${OUTPUT_NAME}" .
           echo "Built: dist/${OUTPUT_NAME}"
           ls -lh dist || true
 
