@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -204,14 +203,27 @@ func (m model) View() string {
 }
 
 func notifySound() {
-	switch runtime.GOOS {
-	case "darwin":
+	// macOS-only: prefer `afplay` to play the system sound. If not present,
+	// fall back to `osascript` notification, then terminal bell.
+	if _, err := exec.LookPath("afplay"); err == nil {
 		_ = exec.Command("afplay", "/System/Library/Sounds/Glass.aiff").Start()
-	case "linux":
-		_ = exec.Command("paplay", "/usr/share/sounds/freedesktop/stereo/complete.oga").Start()
-	case "windows":
-		_ = exec.Command("powershell", "-c", "(New-Object Media.SoundPlayer 'C:\\Windows\\Media\\notify.wav').PlaySync()").Start()
+		return
 	}
+	// If afplay isn't available, try showing a notification with osascript.
+	if _, err := exec.LookPath("osascript"); err == nil {
+		_ = exec.Command("osascript", "-e", "display notification \"Download finished\" with title \"yt-dlp-GUI\"").Start()
+		return
+	}
+	// Final fallback: terminal bell.
+	fmt.Print("\a")
+}
+
+func findExecutable() (string, error) {
+	// macOS-only: require the official yt-dlp binary in PATH.
+	if path, err := exec.LookPath("yt-dlp"); err == nil {
+		return path, nil
+	}
+	return "", fmt.Errorf("yt-dlp not found in PATH; please install via Homebrew: brew install yt-dlp")
 }
 
 func runYtDlpCmd(url, quality string, merge bool, dir string) tea.Cmd {
@@ -223,12 +235,18 @@ func runYtDlpCmd(url, quality string, merge bool, dir string) tea.Cmd {
 			"Audio Only": "bestaudio/best",
 		}
 
+		// macOS-only: require the official yt-dlp binary in PATH.
+		exe, err := findExecutable()
+		if err != nil {
+			return doneMsg{err: err}
+		}
+
 		args := []string{"--newline", "--progress", "-P", dir, "-f", formatMap[quality], url}
 		if merge && quality != "Audio Only" {
 			args = append(args, "--merge-output-format", "mp4")
 		}
 
-		cmd := exec.Command("yt-dlp", args...)
+		cmd := exec.Command(exe, args...)
 		stdout, _ := cmd.StdoutPipe()
 		stderr, _ := cmd.StderrPipe()
 		reader := io.MultiReader(stdout, stderr)

@@ -1,0 +1,59 @@
+name: Build macOS-only binaries
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    name: Build macOS binaries
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        goarch: [amd64, arm64]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: "1.26.x"
+
+      - name: Cache Go modules and build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Display environment
+        run: |
+          echo "Runner OS: $RUNNER_OS"
+          echo "Matrix GOARCH: ${{ matrix.goarch }}"
+
+      - name: Build (macOS)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          OUTPUT_NAME="yt-dlp-gui-darwin-${{ matrix.goarch }}"
+          echo "Building ${OUTPUT_NAME}..."
+          env GOOS=darwin GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -o "dist/${OUTPUT_NAME}" ./yt-dlp-GUI
+          echo "Built: dist/${OUTPUT_NAME}"
+          ls -lh dist || true
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: yt-dlp-gui-darwin-${{ matrix.goarch }}
+          path: dist

@@ -50,6 +50,7 @@ yt-dlp GUI/
 - `versions/source/iter3/main.go`: (see file) incremental improvements.
 - `versions/source/iter4/main.go`: (see file) incremental improvements.
 - `versions/source/iter5/main.go`: (see file) incremental improvements.
+- `versions/source/final/main.go`: form-based UI (current design).
 
 ## Current entry point
 `main.go` matches `versions/source/final/main.go`:
@@ -62,3 +63,60 @@ yt-dlp GUI/
 - “yt-dlp not found”: install `yt-dlp` and ensure it’s on `PATH`.
 - Merge fails: verify FFmpeg on `PATH`.
 - Terminal too small: resize; viewport auto-resizes on `WindowSizeMsg`.
+
+## Cross-platform notes
+
+This project aims to be cross-platform (macOS, Linux, Windows). A few runtime behaviors depend on external system utilities; here's what to expect and how to prepare each platform.
+
+External dependencies
+- `yt-dlp` (preferred) or `youtube-dl` must be installed and available on PATH. The program will attempt to find `yt-dlp`, then `yt_dlp`, then `youtube-dl`.
+- `ffmpeg` should be installed if you want yt-dlp to merge video + audio.
+- Notifications & sounds:
+  - The app uses the `beeep` library for cross-platform desktop notifications and a short beep where supported.
+  - If `beeep` cannot deliver a notification on a system, the binary will attempt a series of platform-specific players/commands (e.g., `afplay` on macOS, `paplay`/`aplay`/`play` on Linux, PowerShell on Windows) and finally fall back to the terminal bell.
+
+Installing useful packages per platform
+- macOS (Homebrew):
+```sh
+brew install yt-dlp ffmpeg sox
+```
+- Ubuntu/Debian:
+```sh
+sudo apt update
+sudo apt install -y yt-dlp ffmpeg libasound2-utils sox libcanberra-gtk-module libcanberra-gtk3-module
+```
+- Windows:
+  - Install `yt-dlp.exe` (winget or manual download) and `ffmpeg`, and add them to PATH. PowerShell is typically available on modern Windows and is used for a simple notification sound.
+
+## Building cross-platform binaries (examples)
+
+From a Linux or macOS machine with Go installed, you can cross-compile:
+
+- Build for Linux x86_64:
+```sh
+GOOS=linux GOARCH=amd64 go build -o yt-dlp-gui-linux ./yt-dlp-GUI
+```
+
+- Build for Windows x86_64:
+```sh
+GOOS=windows GOARCH=amd64 go build -o yt-dlp-gui.exe ./yt-dlp-GUI
+```
+
+- Build for macOS (native build or from macOS):
+```sh
+go build -o yt-dlp-gui ./yt-dlp-GUI
+```
+
+Notes:
+- The binary is pure Go and should cross-compile cleanly, but runtime behavior (like system sounds) depends on the target OS utilities.
+- When packaging, include a short README or installer notes that recommend installing `yt-dlp` and `ffmpeg`.
+
+## CI: GitHub Actions
+
+A suggested CI workflow can build artifacts for macOS, Linux, and Windows. Add a `.github/workflows/build.yml` with a matrix for `GOOS`/`GOARCH` to produce release artifacts. The workflow should:
+- Run `go mod tidy`
+- Build for each target (linux, windows, darwin)
+- Upload build artifacts as part of the job outputs or release assets
+
+## License
+MIT (if you add one; currently unspecified).
