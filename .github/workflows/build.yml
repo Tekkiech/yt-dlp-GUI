@@ -1,20 +1,24 @@
-name: Build macOS-only binaries
+name: Build cross-platform binaries
 
 on:
   push:
     branches:
       - main
+    tags:
+      - "v*"
   pull_request:
     branches:
       - main
   workflow_dispatch:
 
 jobs:
-  build-macos:
-    name: Build macOS binaries
-    runs-on: macos-latest
+  build:
+    name: Build binaries
+    runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
+        goos: [linux, windows, darwin]
         goarch: [amd64, arm64]
 
     steps:
@@ -39,21 +43,50 @@ jobs:
       - name: Display environment
         run: |
           echo "Runner OS: $RUNNER_OS"
+          echo "Matrix GOOS: ${{ matrix.goos }}"
           echo "Matrix GOARCH: ${{ matrix.goarch }}"
 
-      - name: Build (macOS)
+      - name: Build
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p dist
-          OUTPUT_NAME="yt-dlp-gui-darwin-${{ matrix.goarch }}"
+          OUTPUT_NAME="yt-dlp-gui-${{ matrix.goos }}-${{ matrix.goarch }}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            OUTPUT_NAME="${OUTPUT_NAME}.exe"
+          fi
           echo "Building ${OUTPUT_NAME}..."
-          env GOOS=darwin GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 go build -o "dist/${OUTPUT_NAME}" .
+          env GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} CGO_ENABLED=0 \
+            go build -o "dist/${OUTPUT_NAME}" .
           echo "Built: dist/${OUTPUT_NAME}"
           ls -lh dist || true
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: yt-dlp-gui-darwin-${{ matrix.goarch }}
+          name: yt-dlp-gui-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Display release assets
+        run: |
+          ls -lh dist
+          find dist -type f -maxdepth 2 -print
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/**/*
