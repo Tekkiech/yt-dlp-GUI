@@ -14,10 +14,15 @@ OUTDIR ?= dist
 GO ?= go
 LIPO ?= lipo
 CODESIGN ?= codesign
+INSTALL_DIR ?= /usr/local/bin
+
+# Version embedded into the binary (main.version) via ldflags.
+# Derived from the nearest git tag; falls back to "dev" outside a git checkout.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 # Extra build flags
 # Example: make BUILD_FLAGS="-ldflags='-s -w'" build
-BUILD_FLAGS ?=
+BUILD_FLAGS ?= -ldflags "-s -w -X main.version=$(VERSION)"
 
 # Default GO settings for static-ish build (CGO disabled)
 CGO_ENABLED ?= 0
@@ -27,7 +32,7 @@ OUT_AMD64 := $(OUTDIR)/$(BINARY)-darwin-amd64
 OUT_ARM64 := $(OUTDIR)/$(BINARY)-darwin-arm64
 OUT_UNIV := $(OUTDIR)/$(BINARY)-darwin-universal
 
-.PHONY: help tidy build build-amd64 build-arm64 build-universal clean release deps install-deps
+.PHONY: help tidy build build-amd64 build-arm64 build-universal clean release deps install-deps install uninstall
 
 help:
 	@echo "Makefile targets:"
@@ -35,6 +40,8 @@ help:
 	@echo "  make build-amd64     Build Intel (amd64) macOS binary"
 	@echo "  make build-arm64     Build Apple Silicon (arm64) macOS binary"
 	@echo "  make build-universal Build universal (fat) macOS binary (requires lipo)"
+	@echo "  make install         Build and install to $(INSTALL_DIR)/$(BINARY) (sudo)"
+	@echo "  make uninstall       Remove $(INSTALL_DIR)/$(BINARY) (sudo)"
 	@echo "  make tidy            Run 'go mod tidy' in repo root"
 	@echo "  make clean           Remove $(OUTDIR)"
 	@echo "  make release         Build universal and create tar.gz in $(OUTDIR)"
@@ -83,6 +90,16 @@ release: build-universal
 	@mkdir -p $(OUTDIR)
 	@tar -C $(OUTDIR) -czf $(OUTDIR)/$(BINARY)-darwin-universal.tar.gz "$(notdir $(OUT_UNIV))"
 	@echo "Release archive: $(OUTDIR)/$(BINARY)-darwin-universal.tar.gz"
+
+install: build
+	@echo "Installing $(OUTDIR)/$(BINARY) to $(INSTALL_DIR)/$(BINARY) ($(VERSION))..."
+	@sudo install -m 0755 "$(OUTDIR)/$(BINARY)" "$(INSTALL_DIR)/$(BINARY)"
+	@echo "Installed: $(INSTALL_DIR)/$(BINARY)"
+
+uninstall:
+	@echo "Removing $(INSTALL_DIR)/$(BINARY)..."
+	@sudo rm -f "$(INSTALL_DIR)/$(BINARY)"
+	@echo "Uninstall complete."
 
 clean:
 	@echo "Removing $(OUTDIR)..."

@@ -14,6 +14,9 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// version is set at build time via -ldflags "-X main.version=vX.Y.Z"
+var version = "dev"
+
 // --- Custom Messages ---
 type logMsg string
 type doneMsg struct{ err error }
@@ -267,6 +270,11 @@ func runYtDlpCmd(url, quality string, merge bool, dir string) tea.Cmd {
 var p *tea.Program
 
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		fmt.Println("yt-dlp-gui " + version)
+		return
+	}
+
 	m := initialModel()
 	p = tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {

@@ -23,6 +23,13 @@ go build -o yt-dlp-gui
 ./yt-dlp-gui
 ```
 
+### Install to /usr/local/bin (macOS)
+```sh
+make install    # builds and installs to /usr/local/bin/yt-dlp-gui (prompts for sudo)
+make uninstall   # removes it
+```
+Check the installed version with `yt-dlp-gui --version`.
+
 ## Usage (keys)
 - Form screen: fill fields, Enter to submit, Ctrl+C to quit.
 - Download screen: `q` quit • `b` back to form • `c` clear logs • Ctrl+C quit.
@@ -34,26 +41,17 @@ go build -o yt-dlp-gui
 - Audio Only: `bestaudio/best` (merge skipped)
 
 ## Project layout
-```/dev/null/tree.txt#L1-12
+```/dev/null/tree.txt#L1-6
 yt-dlp GUI/
-├─ main.go                # current app entry (form-based TUI)
+├─ main.go                # app entry (form-based TUI)
 ├─ go.mod / go.sum
-├─ versions/
-│  ├─ source/
-│  │  ├─ iter1/…iter5/    # earlier source iterations
-└─ └─ └─ final/main.go    # final iteration source         # original binary snapshots
+├─ Makefile                # build/install targets
+├─ scripts/build-all.sh    # cross-platform build script
+└─ .github/workflows/      # CI: build + auto-release
 ```
 
-## Iteration history (source)
-- `versions/source/iter1/main.go`: initial text-input URL + log viewport + merge toggle.
-- `versions/source/iter2/main.go`: (see file) incremental improvements.
-- `versions/source/iter3/main.go`: (see file) incremental improvements.
-- `versions/source/iter4/main.go`: (see file) incremental improvements.
-- `versions/source/iter5/main.go`: (see file) incremental improvements.
-- `versions/source/final/main.go`: form-based UI (current design).
-
 ## Current entry point
-`main.go` matches `versions/source/final/main.go`:
+`main.go`:
 - Uses `huh` for form.
 - `bubbletea` + `viewport` for logs.
 - `lipgloss` for styling.
@@ -118,21 +116,15 @@ Where to get builds
 
 ## CI: GitHub Actions
 
-This repository already contains a workflow at `.github/workflows/build.yml`. At the moment the included workflow builds macOS binaries (matrix: `amd64`, `arm64`) on `macos-latest` and uploads the `dist` directory as artifacts.
+The workflow at `.github/workflows/build.yml` builds cross-platform binaries (`linux`/`windows`/`darwin` × `amd64`/`arm64`) on every push and pull request, and auto-releases:
 
-If you want a broader CI that produces cross-platform release assets, consider:
-- Expanding the workflow matrix to include `GOOS=linux` and `GOOS=windows` entries.
-- Running `go mod tidy` and then building the repository root package (`.`) for each target.
-- Using `actions/upload-artifact` for temporary artifacts and/or automating creation of GitHub Releases (via `actions/create-release` + `actions/upload-release-asset`) for stable release assets.
-- Optionally using tools like `goreleaser` to simplify packaging and creating release attachments.
+- **Push to `main`**: the workflow computes the next patch version from the highest existing `vX.Y.Z` tag (e.g. `v1.0.1` -> `v1.0.2`), builds all targets with that version embedded (`main.version`), creates the git tag, and publishes a GitHub Release with all binaries attached — no manual tagging required.
+- **Manual tag push** (`git tag vX.Y.Z && git push --tags`) or `workflow_dispatch`: also produces/updates a release using that tag.
+- **Pull requests**: binaries are built and uploaded as workflow artifacts for validation only — no release is created.
 
-Where to obtain binaries from CI:
-- Stable releases: use GitHub Releases (release assets attached to version tags).
-- Latest or intermediate builds: use the Actions tab, find the workflow run for the commit or branch, and download the uploaded artifacts from that run.
-
-If you'd like, I can:
-- Add a short example workflow snippet that builds for linux/windows/darwin and uploads artifacts, or
-- Update the README to include direct links to Releases and Actions pages (or example commands to download artifacts) for convenience.
+Where to obtain binaries:
+- Stable releases: GitHub Releases (auto-published on every `main` push).
+- Latest or intermediate builds: the Actions tab, for the workflow run matching a specific commit/branch.
 
 ## License
-MIT (if you add one; currently unspecified).
+[MIT](LICENSE)
