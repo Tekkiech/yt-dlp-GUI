@@ -6,7 +6,9 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -47,6 +49,28 @@ var (
 	defaultMerge   = true
 	defaultDir, _  = os.Getwd()
 )
+
+// runningCmd tracks the in-flight yt-dlp process so it can be killed if the
+// user quits mid-download instead of leaving it orphaned in the background.
+var (
+	runningCmd   *exec.Cmd
+	runningCmdMu sync.Mutex
+)
+
+func setRunningCmd(cmd *exec.Cmd) {
+	runningCmdMu.Lock()
+	runningCmd = cmd
+	runningCmdMu.Unlock()
+}
+
+func killRunningCmd() {
+	runningCmdMu.Lock()
+	defer runningCmdMu.Unlock()
+	if runningCmd != nil && runningCmd.Process != nil {
+		_ = runningCmd.Process.Kill()
+	}
+	runningCmd = nil
+}
 
 func newConfigForm() *huh.Form {
 	return huh.NewForm(
@@ -112,10 +136,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
+			killRunningCmd()
 			return m, tea.Quit
 		case "q":
 			// If not in the form, 'q' quits immediately
 			if m.state != stateConfig {
+				killRunningCmd()
 				return m, tea.Quit
 			}
 		case "c":
@@ -206,27 +232,57 @@ func (m model) View() string {
 }
 
 func notifySound() {
-	// macOS-only: prefer `afplay` to play the system sound. If not present,
-	// fall back to `osascript` notification, then terminal bell.
-	if _, err := exec.LookPath("afplay"); err == nil {
-		_ = exec.Command("afplay", "/System/Library/Sounds/Glass.aiff").Start()
-		return
-	}
-	// If afplay isn't available, try showing a notification with osascript.
-	if _, err := exec.LookPath("osascript"); err == nil {
-		_ = exec.Command("osascript", "-e", "display notification \"Download finished\" with title \"yt-dlp-GUI\"").Start()
-		return
+	switch runtime.GOOS {
+	case "darwin":
+		if _, err := exec.LookPath("afplay"); err == nil {
+			_ = exec.Command("afplay", "/System/Library/Sounds/Glass.aiff").Start()
+			return
+		}
+		if _, err := exec.LookPath("osascript"); err == nil {
+			_ = exec.Command("osascript", "-e", `display notification "Download finished" with title "yt-dlp-GUI"`).Start()
+			return
+		}
+	case "linux":
+		sounds := []string{
+			"/usr/share/sounds/freedesktop/stereo/complete.oga",
+			"/usr/share/sounds/freedesktop/stereo/bell.oga",
+		}
+		for _, player := range []string{"paplay", "aplay", "play"} {
+			playerPath, err := exec.LookPath(player)
+			if err != nil {
+				continue
+			}
+			for _, sound := range sounds {
+				if _, err := os.Stat(sound); err == nil {
+					_ = exec.Command(playerPath, sound).Start()
+					return
+				}
+			}
+		}
+	case "windows":
+		if path, err := exec.LookPath("powershell"); err == nil {
+			_ = exec.Command(path, "-NoProfile", "-Command", "[console]::beep(800,300)").Start()
+			return
+		}
 	}
 	// Final fallback: terminal bell.
 	fmt.Print("\a")
 }
 
 func findExecutable() (string, error) {
-	// macOS-only: require the official yt-dlp binary in PATH.
-	if path, err := exec.LookPath("yt-dlp"); err == nil {
-		return path, nil
+	for _, name := range []string{"yt-dlp", "yt_dlp", "youtube-dl"} {
+		if path, err := exec.LookPath(name); err == nil {
+			return path, nil
+		}
 	}
-	return "", fmt.Errorf("yt-dlp not found in PATH; please install via Homebrew: brew install yt-dlp")
+	switch runtime.GOOS {
+	case "darwin":
+		return "", fmt.Errorf("yt-dlp not found in PATH; install it with: brew install yt-dlp")
+	case "windows":
+		return "", fmt.Errorf("yt-dlp not found in PATH; install yt-dlp.exe and add it to PATH (see https://github.com/yt-dlp/yt-dlp#installation)")
+	default:
+		return "", fmt.Errorf("yt-dlp not found in PATH; install it with your package manager, e.g.: sudo apt install yt-dlp")
+	}
 }
 
 func runYtDlpCmd(url, quality string, merge bool, dir string) tea.Cmd {
@@ -250,20 +306,40 @@ func runYtDlpCmd(url, quality string, merge bool, dir string) tea.Cmd {
 		}
 
 		cmd := exec.Command(exe, args...)
-		stdout, _ := cmd.StdoutPipe()
-		stderr, _ := cmd.StderrPipe()
-		reader := io.MultiReader(stdout, stderr)
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			return doneMsg{err: err}
+		}
+		stderr, err := cmd.StderrPipe()
+		if err != nil {
+			return doneMsg{err: err}
+		}
 
 		if err := cmd.Start(); err != nil {
 			return doneMsg{err: err}
 		}
+		setRunningCmd(cmd)
 
-		scanner := bufio.NewScanner(reader)
-		for scanner.Scan() {
-			p.Send(logMsg(scanner.Text()))
+		// Read stdout and stderr concurrently: reading them sequentially via
+		// io.MultiReader would block on stdout until the process exits before
+		// ever draining stderr, which can also deadlock the child if its
+		// stderr pipe buffer fills up while nothing is reading it.
+		var wg sync.WaitGroup
+		streamLines := func(r io.Reader) {
+			defer wg.Done()
+			scanner := bufio.NewScanner(r)
+			for scanner.Scan() {
+				p.Send(logMsg(scanner.Text()))
+			}
 		}
+		wg.Add(2)
+		go streamLines(stdout)
+		go streamLines(stderr)
+		wg.Wait()
 
-		return doneMsg{err: cmd.Wait()}
+		waitErr := cmd.Wait()
+		setRunningCmd(nil)
+		return doneMsg{err: waitErr}
 	}
 }
 
