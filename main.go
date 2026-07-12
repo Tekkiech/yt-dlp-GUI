@@ -10,6 +10,10 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/progress"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/huh"
@@ -32,15 +36,24 @@ const (
 )
 
 type model struct {
-	state         sessionState
-	form          *huh.Form
-	url           string
-	quality       string
-	outputDir     string
-	mergeFFmpeg   bool
-	status        string
+	state       sessionState
+	form        *huh.Form
+	url         string
+	quality     string
+	outputDir   string
+	mergeFFmpeg bool
+	status      string
+
+	phase              string
+	percent            float64
+	speed, eta, size   string
+	sawDownloadPercent bool
+
 	logLines      []string
 	logViewport   viewport.Model
+	spinnerModel  spinner.Model
+	progressModel progress.Model
+	help          help.Model
 	width, height int
 }
 
@@ -112,10 +125,21 @@ func newConfigForm() *huh.Form {
 
 func initialModel() model {
 	vp := viewport.New(80, 10)
+	sp := spinner.New(
+		spinner.WithSpinner(spinner.Dot),
+		spinner.WithStyle(lipgloss.NewStyle().Foreground(colorPink)),
+	)
+	pm := progress.New(
+		progress.WithGradient(string(colorPink), string(colorPurple)),
+		progress.WithWidth(40),
+	)
 	return model{
-		state:       stateConfig,
-		form:        newConfigForm(),
-		logViewport: vp,
+		state:         stateConfig,
+		form:          newConfigForm(),
+		logViewport:   vp,
+		spinnerModel:  sp,
+		progressModel: pm,
+		help:          help.New(),
 	}
 }
 
@@ -130,7 +154,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		m.logViewport.Width = m.width - 4
-		m.logViewport.Height = m.height - 14
+		m.logViewport.Height = m.height - 18
+		if m.logViewport.Height < 4 {
+			m.logViewport.Height = 4
+		}
+		contentWidth := m.width - 8
+		if contentWidth < 20 {
+			contentWidth = 20
+		}
+		m.progressModel.Width = contentWidth
+		m.help.Width = m.width
 		m.refreshViewport()
 
 	case tea.KeyMsg:
@@ -157,17 +190,45 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+	case spinner.TickMsg:
+		if m.state == stateDownloading && (m.phase == phasePreparing || m.phase == phasePostprocessing) {
+			var cmd tea.Cmd
+			m.spinnerModel, cmd = m.spinnerModel.Update(msg)
+			cmds = append(cmds, cmd)
+		}
+
+	case progress.FrameMsg:
+		newProgress, cmd := m.progressModel.Update(msg)
+		if pm, ok := newProgress.(progress.Model); ok {
+			m.progressModel = pm
+		}
+		cmds = append(cmds, cmd)
+
 	case logMsg:
-		m.logLines = append(m.logLines, string(msg))
+		line := string(msg)
+		m.logLines = append(m.logLines, line)
 		m.refreshViewport()
+
+		if info, ok := parseProgressLine(line); ok {
+			m.sawDownloadPercent = true
+			m.phase = phaseDownloading
+			m.percent = info.percent
+			m.size, m.speed, m.eta = info.size, info.speed, info.eta
+			cmds = append(cmds, m.progressModel.SetPercent(info.percent/100))
+		} else if m.sawDownloadPercent && m.phase == phaseDownloading && m.percent >= 99.9 {
+			m.phase = phasePostprocessing
+			cmds = append(cmds, spinner.Tick)
+		}
 
 	case doneMsg:
 		m.state = stateFinished
 		notifySound()
 		if msg.err != nil {
-			m.status = "❌ Error: " + msg.err.Error()
+			m.phase = phaseError
+			m.status = msg.err.Error()
 		} else {
-			m.status = "✅ Download Finished!"
+			m.phase = phaseDone
+			m.status = "Download finished"
 		}
 	}
 
@@ -190,8 +251,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.outputDir = m.form.GetString("dir")
 			m.state = stateDownloading
 			m.status = "Downloading..."
+			m.phase = phasePreparing
+			m.percent = 0
+			m.speed, m.eta, m.size = "", "", ""
+			m.sawDownloadPercent = false
 			m.logLines = nil
-			return m, runYtDlpCmd(m.url, m.quality, m.mergeFFmpeg, m.outputDir)
+			return m, tea.Batch(
+				runYtDlpCmd(m.url, m.quality, m.mergeFFmpeg, m.outputDir),
+				spinner.Tick,
+				m.progressModel.SetPercent(0),
+			)
 		}
 	}
 
@@ -204,31 +273,96 @@ func (m *model) refreshViewport() {
 }
 
 func (m model) View() string {
+	logo := gradientText("YT-DLP GUI", colorPink, colorPurple)
+
 	if m.state == stateConfig {
-		// Footer added to form view for clarity
-		return lipgloss.JoinVertical(lipgloss.Left,
-			lipgloss.NewStyle().Padding(1, 2).Render(m.form.View()),
-			lipgloss.NewStyle().Padding(0, 2).Foreground(lipgloss.Color("8")).Render("Press ctrl+c to quit"),
+		header := lipgloss.JoinVertical(lipgloss.Left,
+			logo,
+			subtitleStyle.Render("Download videos, beautifully."),
+		)
+
+		footer := m.help.ShortHelpView([]key.Binding{keyQuitForm})
+
+		return lipgloss.NewStyle().Padding(1, 2).Render(
+			lipgloss.JoinVertical(lipgloss.Left, header, "", m.form.View(), footer),
 		)
 	}
 
-	header := lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true).Render("YT-DLP Session")
-	info := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(
-		fmt.Sprintf("URL: %s\nQuality: %s | Dir: %s", m.url, m.quality, m.outputDir),
-	)
+	border := colorPurple
+	statusIcon := m.spinnerModel.View()
+	statusText := "Preparing…"
+	switch m.phase {
+	case phaseDownloading:
+		statusIcon = ""
+		statusText = fmt.Sprintf("Downloading… %.1f%%", m.percent)
+	case phasePostprocessing:
+		statusText = "Finishing up (merging/postprocessing)…"
+	case phaseDone:
+		border = colorGreen
+		statusIcon = lipgloss.NewStyle().Foreground(colorGreen).Bold(true).Render("✓")
+		statusText = "Download finished"
+	case phaseError:
+		border = colorRed
+		statusIcon = lipgloss.NewStyle().Foreground(colorRed).Bold(true).Render("✗")
+		statusText = errorTextStyle.Render("Error: " + m.status)
+	}
+	statusLine := lipgloss.JoinHorizontal(lipgloss.Top, statusIcon, " ", statusText)
 
-	footer := lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(" [q] Quit • [b] Back • [c] Clear")
+	// Match the log panel's outer width (border only, no padding: m.width-4
+	// content + 2 border cols) so the two panels line up as a single stack.
+	infoContentWidth := m.width - 4
+	if infoContentWidth < 20 {
+		infoContentWidth = 20
+	}
+	valueWidth := infoContentWidth - 11
+	if valueWidth < 10 {
+		valueWidth = 10
+	}
+	infoPanel := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorMuted).
+		Padding(0, 2).
+		Width(infoContentWidth).
+		Render(lipgloss.JoinVertical(lipgloss.Left,
+			kv("URL", truncate(m.url, valueWidth)),
+			kv("Quality", m.quality)+"   "+kv("Merge", yesNo(m.mergeFFmpeg)),
+			kv("Output", truncate(m.outputDir, valueWidth)),
+		))
 
-	ui := lipgloss.JoinVertical(lipgloss.Left,
-		header,
-		info,
-		"Status: "+m.status,
+	var progressBlock string
+	if m.phase == phaseDownloading || m.phase == phasePostprocessing || m.phase == phaseDone {
+		lines := []string{m.progressModel.View()}
+		if m.speed != "" {
+			lines = append(lines, statChipStyle.Render(
+				fmt.Sprintf("%s  •  ETA %s  •  %s", m.speed, m.eta, m.size)))
+		}
+		progressBlock = lipgloss.JoinVertical(lipgloss.Left, lines...)
+	}
+
+	logPanel := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(border).
+		Render(m.logViewport.View())
+
+	bindings := []key.Binding{keyQuit, keyClear}
+	if m.state == stateFinished {
+		bindings = append(bindings, keyBack)
+	}
+	footer := m.help.ShortHelpView(bindings)
+
+	body := lipgloss.JoinVertical(lipgloss.Left,
+		logo,
+		statusLine,
 		"",
-		lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("8")).Render(m.logViewport.View()),
+		infoPanel,
+		"",
+		progressBlock,
+		"",
+		logPanel,
 		footer,
 	)
 
-	return lipgloss.NewStyle().Padding(1, 2).Render(ui)
+	return lipgloss.NewStyle().Padding(1, 2).Render(body)
 }
 
 func notifySound() {
