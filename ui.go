@@ -98,13 +98,6 @@ func kv(label, value string) string {
 	return panelLabelStyle.Render(label) + panelValueStyle.Render(value)
 }
 
-func yesNo(b bool) string {
-	if b {
-		return "Yes"
-	}
-	return "No"
-}
-
 // --- yt-dlp progress line parsing ---
 
 // e.g. "[download]  57.9% of  118.62MiB at   16.17MiB/s ETA 00:03"

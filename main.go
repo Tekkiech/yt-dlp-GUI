@@ -36,13 +36,10 @@ const (
 )
 
 type model struct {
-	state       sessionState
-	form        *huh.Form
-	url         string
-	quality     string
-	outputDir   string
-	mergeFFmpeg bool
-	status      string
+	state  sessionState
+	form   *huh.Form
+	config downloadConfig
+	status string
 
 	phase              string
 	percent            float64
@@ -58,9 +55,11 @@ type model struct {
 }
 
 var (
-	defaultQuality = "1080p"
-	defaultMerge   = true
-	defaultDir, _  = os.Getwd()
+	defaultMode         = "video"
+	defaultVideoQuality = "1080"
+	defaultVideoFormat  = "mp4"
+	defaultAudioFormat  = "best"
+	defaultDir, _       = os.Getwd()
 )
 
 // runningCmd tracks the in-flight yt-dlp process so it can be killed if the
@@ -99,15 +98,13 @@ func newConfigForm() *huh.Form {
 					return nil
 				}),
 			huh.NewSelect[string]().
-				Key("quality").
-				Title("Quality").
+				Key("mode").
+				Title("Download").
 				Options(
-					huh.NewOption("4K", "4K (2160p)"),
-					huh.NewOption("1080p", "1080p"),
-					huh.NewOption("720p", "720p"),
-					huh.NewOption("Audio", "Audio Only"),
+					huh.NewOption("Video", "video"),
+					huh.NewOption("Audio only", "audio"),
 				).
-				Value(&defaultQuality),
+				Value(&defaultMode),
 			huh.NewFilePicker().
 				Key("dir").
 				Title("Select Download Directory").
@@ -115,11 +112,49 @@ func newConfigForm() *huh.Form {
 				DirAllowed(true).
 				FileAllowed(false).
 				Value(&defaultDir),
-			huh.NewConfirm().
-				Key("merge").
-				Title("Merge with FFmpeg?").
-				Value(&defaultMerge),
 		),
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Key("videoQuality").
+				Title("Video Quality").
+				Options(
+					huh.NewOption("4K (2160p)", "2160"),
+					huh.NewOption("1080p", "1080"),
+					huh.NewOption("720p", "720"),
+					huh.NewOption("Best available", "best"),
+				).
+				Value(&defaultVideoQuality),
+			huh.NewSelect[string]().
+				Key("videoFormat").
+				Title("Output Format").
+				Description("Anything other than MP4 is re-encoded with ffmpeg.").
+				Options(
+					huh.NewOption("MP4 (merge, fast)", "mp4"),
+					huh.NewOption("MKV (convert)", "mkv"),
+					huh.NewOption("WebM (convert)", "webm"),
+					huh.NewOption("MOV (convert)", "mov"),
+					huh.NewOption("AVI (convert)", "avi"),
+					huh.NewOption("Original (no merge)", "none"),
+				).
+				Value(&defaultVideoFormat),
+		).WithHideFunc(func() bool { return defaultMode != "video" }),
+		huh.NewGroup(
+			huh.NewSelect[string]().
+				Key("audioFormat").
+				Title("Audio Format").
+				Description("Converted with ffmpeg via yt-dlp's audio extractor.").
+				Options(
+					huh.NewOption("Best (original)", "best"),
+					huh.NewOption("MP3", "mp3"),
+					huh.NewOption("FLAC", "flac"),
+					huh.NewOption("WAV", "wav"),
+					huh.NewOption("OGG (Vorbis)", "vorbis"),
+					huh.NewOption("M4A (AAC)", "m4a"),
+					huh.NewOption("Opus", "opus"),
+					huh.NewOption("ALAC", "alac"),
+				).
+				Value(&defaultAudioFormat),
+		).WithHideFunc(func() bool { return defaultMode != "audio" }),
 	).WithTheme(huh.ThemeCharm())
 }
 
@@ -245,10 +280,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.form.State == huh.StateCompleted {
-			m.url = m.form.GetString("url")
-			m.quality = m.form.GetString("quality")
-			m.mergeFFmpeg = m.form.GetBool("merge")
-			m.outputDir = m.form.GetString("dir")
+			m.config = downloadConfig{
+				url:          m.form.GetString("url"),
+				dir:          m.form.GetString("dir"),
+				mode:         m.form.GetString("mode"),
+				videoQuality: defaultVideoQuality,
+				videoFormat:  defaultVideoFormat,
+				audioFormat:  defaultAudioFormat,
+			}
 			m.state = stateDownloading
 			m.status = "Downloading..."
 			m.phase = phasePreparing
@@ -257,7 +296,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sawDownloadPercent = false
 			m.logLines = nil
 			return m, tea.Batch(
-				runYtDlpCmd(m.url, m.quality, m.mergeFFmpeg, m.outputDir),
+				runYtDlpCmd(m.config),
 				spinner.Tick,
 				m.progressModel.SetPercent(0),
 			)
@@ -318,15 +357,22 @@ func (m model) View() string {
 	if valueWidth < 10 {
 		valueWidth = 10
 	}
+	var formatLine string
+	if m.config.mode == "audio" {
+		formatLine = kv("Format", audioFormatLabel(m.config.audioFormat))
+	} else {
+		formatLine = kv("Quality", videoQualityLabel(m.config.videoQuality)) +
+			"   " + kv("Format", videoFormatLabel(m.config.videoFormat))
+	}
 	infoPanel := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colorMuted).
 		Padding(0, 2).
 		Width(infoContentWidth).
 		Render(lipgloss.JoinVertical(lipgloss.Left,
-			kv("URL", truncate(m.url, valueWidth)),
-			kv("Quality", m.quality)+"   "+kv("Merge", yesNo(m.mergeFFmpeg)),
-			kv("Output", truncate(m.outputDir, valueWidth)),
+			kv("URL", truncate(m.config.url, valueWidth)),
+			formatLine,
+			kv("Output", truncate(m.config.dir, valueWidth)),
 		))
 
 	var progressBlock string
@@ -419,27 +465,14 @@ func findExecutable() (string, error) {
 	}
 }
 
-func runYtDlpCmd(url, quality string, merge bool, dir string) tea.Cmd {
+func runYtDlpCmd(cfg downloadConfig) tea.Cmd {
 	return func() tea.Msg {
-		formatMap := map[string]string{
-			"4K (2160p)": "bestvideo[height<=2160]+bestaudio/best",
-			"1080p":      "bestvideo[height<=1080]+bestaudio/best",
-			"720p":       "bestvideo[height<=720]+bestaudio/best",
-			"Audio Only": "bestaudio/best",
-		}
-
-		// macOS-only: require the official yt-dlp binary in PATH.
 		exe, err := findExecutable()
 		if err != nil {
 			return doneMsg{err: err}
 		}
 
-		args := []string{"--newline", "--progress", "-P", dir, "-f", formatMap[quality], url}
-		if merge && quality != "Audio Only" {
-			args = append(args, "--merge-output-format", "mp4")
-		}
-
-		cmd := exec.Command(exe, args...)
+		cmd := exec.Command(exe, buildYtDlpArgs(cfg)...)
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
 			return doneMsg{err: err}

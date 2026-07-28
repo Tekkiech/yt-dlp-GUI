@@ -1,11 +1,12 @@
 # yt-dlp GUI (TUI)
 
-A Charmbracelet-based TUI wrapper around the `yt-dlp` project with form-driven configuration, FFmpeg merge toggle, selectable quality presets, directory picker, and live log viewport.
+A Charmbracelet-based TUI wrapper around the `yt-dlp` project with form-driven configuration, video/audio format conversion via ffmpeg, a directory picker, and a live animated progress view.
 
 ## Features
-- Guided form (URL, quality preset, download directory, merge toggle).
-- Live yt-dlp log output while downloading.
-- FFmpeg merge toggle (mp4) when applicable.
+- Guided, conditional form: pick video or audio-only, then the relevant options for that mode.
+- Video: quality presets (4K/1080p/720p/best) and an output container — MP4 (fast merge) or MKV/WebM/MOV/AVI (real ffmpeg re-encode).
+- Audio-only: extract to MP3, FLAC, WAV, OGG (Vorbis), M4A (AAC), Opus, ALAC, or keep the original best audio codec — all via yt-dlp's ffmpeg-backed audio extractor.
+- Live animated, gradient progress bar and speed/ETA/size stats parsed from yt-dlp's own output, plus the full raw log.
 - Keyboard controls: quit, back, clear logs.
 - Cross-platform notification sound on completion.
 
@@ -34,11 +35,12 @@ Check the installed version with `yt-dlp-gui --version`.
 - Form screen: fill fields, Enter to submit, Ctrl+C to quit.
 - Download screen: `q` quit • `b` back to form • `c` clear logs • Ctrl+C quit.
 
-## Quality presets
-- 4K (2160p): `bestvideo[height<=2160]+bestaudio/best`
-- 1080p: `bestvideo[height<=1080]+bestaudio/best`
-- 720p: `bestvideo[height<=720]+bestaudio/best`
-- Audio Only: `bestaudio/best` (merge skipped)
+## Video quality & format
+- Quality: 4K (2160p), 1080p, 720p, or best available (`bestvideo[height<=N]+bestaudio/best`).
+- Format: MP4 merges the downloaded streams losslessly (`--merge-output-format mp4`); MKV/WebM/MOV/AVI trigger a real ffmpeg re-encode (`--recode-video`) so the conversion always succeeds, even across incompatible codec/container pairs; "Original" skips conversion entirely.
+
+## Audio formats
+Selecting "Audio only" downloads the best audio stream, then optionally converts it with yt-dlp's `--extract-audio --audio-format <fmt> --audio-quality 0` (ffmpeg under the hood): MP3, FLAC, WAV, OGG (Vorbis), M4A (AAC), Opus, ALAC, or "Best (original)" to skip conversion and keep the source codec/container.
 
 ## Project layout
 ```/dev/null/tree.txt#L1-6
