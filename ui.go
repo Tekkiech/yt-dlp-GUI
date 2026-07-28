@@ -17,6 +17,7 @@ var (
 	colorPurple = lipgloss.Color("#7D56F4")
 	colorGreen  = lipgloss.Color("#04B575")
 	colorRed    = lipgloss.Color("#FF5F87")
+	colorWarn   = lipgloss.Color("#FFB86C")
 	colorMuted  = lipgloss.AdaptiveColor{Light: "#909090", Dark: "#6C6C6C"}
 	colorSubtle = lipgloss.AdaptiveColor{Light: "#3C3C3C", Dark: "#DCDCDC"}
 )
@@ -27,6 +28,8 @@ var (
 	panelValueStyle = lipgloss.NewStyle().Foreground(colorSubtle)
 	statChipStyle   = lipgloss.NewStyle().Foreground(colorMuted)
 	errorTextStyle  = lipgloss.NewStyle().Foreground(colorRed)
+	okTextStyle     = lipgloss.NewStyle().Foreground(colorGreen)
+	warnTextStyle   = lipgloss.NewStyle().Foreground(colorWarn)
 )
 
 // --- Keymap ---
@@ -96,6 +99,38 @@ func truncate(s string, n int) string {
 
 func kv(label, value string) string {
 	return panelLabelStyle.Render(label) + panelValueStyle.Render(value)
+}
+
+// toolStatusLines renders the yt-dlp/ffmpeg preflight check as a couple of
+// styled lines for the config screen: green when found (with version if we
+// have one), amber for a missing-but-non-fatal ffmpeg, red for a missing
+// yt-dlp (nothing can be downloaded at all) — each with an install hint.
+func toolStatusLines(yt, ff toolCheck) []string {
+	var lines []string
+
+	if yt.available {
+		v := yt.version
+		if v == "" {
+			v = "detected"
+		}
+		lines = append(lines, okTextStyle.Render("✓ ")+"yt-dlp "+v)
+	} else {
+		lines = append(lines, errorTextStyle.Render("✗ ")+"yt-dlp not found — install: "+installHint("yt-dlp"))
+	}
+
+	if ff.available {
+		label := "ffmpeg"
+		if ff.version != "" {
+			label += " " + ff.version
+		}
+		label += " — format conversion available"
+		lines = append(lines, okTextStyle.Render("✓ ")+label)
+	} else {
+		lines = append(lines, warnTextStyle.Render("⚠ ")+
+			"ffmpeg not found — conversion disabled, original format only. Install: "+installHint("ffmpeg"))
+	}
+
+	return lines
 }
 
 // --- yt-dlp progress line parsing ---

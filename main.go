@@ -62,6 +62,12 @@ var (
 	defaultDir, _       = os.Getwd()
 )
 
+// Preflight tool checks, populated once in main() before the program starts.
+var (
+	ytdlpCheck  toolCheck
+	ffmpegCheck toolCheck
+)
+
 // runningCmd tracks the in-flight yt-dlp process so it can be killed if the
 // user quits mid-download instead of leaving it orphaned in the background.
 var (
@@ -85,6 +91,40 @@ func killRunningCmd() {
 }
 
 func newConfigForm() *huh.Form {
+	videoFormatOptions := []huh.Option[string]{
+		huh.NewOption("Original (no merge)", "none"),
+	}
+	videoFormatDescription := "ffmpeg not found: only a single pre-muxed file is available (no merge/convert)."
+	if ffmpegCheck.available {
+		videoFormatOptions = []huh.Option[string]{
+			huh.NewOption("MP4 (merge, fast)", "mp4"),
+			huh.NewOption("MKV (convert)", "mkv"),
+			huh.NewOption("WebM (convert)", "webm"),
+			huh.NewOption("MOV (convert)", "mov"),
+			huh.NewOption("AVI (convert)", "avi"),
+			huh.NewOption("Original (no merge)", "none"),
+		}
+		videoFormatDescription = "Anything other than MP4 is re-encoded with ffmpeg."
+	}
+
+	audioFormatOptions := []huh.Option[string]{
+		huh.NewOption("Best (original)", "best"),
+	}
+	audioFormatDescription := "ffmpeg not found: only the original audio codec is available (no conversion)."
+	if ffmpegCheck.available {
+		audioFormatOptions = []huh.Option[string]{
+			huh.NewOption("Best (original)", "best"),
+			huh.NewOption("MP3", "mp3"),
+			huh.NewOption("FLAC", "flac"),
+			huh.NewOption("WAV", "wav"),
+			huh.NewOption("OGG (Vorbis)", "vorbis"),
+			huh.NewOption("M4A (AAC)", "m4a"),
+			huh.NewOption("Opus", "opus"),
+			huh.NewOption("ALAC", "alac"),
+		}
+		audioFormatDescription = "Converted with ffmpeg via yt-dlp's audio extractor."
+	}
+
 	return huh.NewForm(
 		huh.NewGroup(
 			huh.NewInput().
@@ -127,32 +167,16 @@ func newConfigForm() *huh.Form {
 			huh.NewSelect[string]().
 				Key("videoFormat").
 				Title("Output Format").
-				Description("Anything other than MP4 is re-encoded with ffmpeg.").
-				Options(
-					huh.NewOption("MP4 (merge, fast)", "mp4"),
-					huh.NewOption("MKV (convert)", "mkv"),
-					huh.NewOption("WebM (convert)", "webm"),
-					huh.NewOption("MOV (convert)", "mov"),
-					huh.NewOption("AVI (convert)", "avi"),
-					huh.NewOption("Original (no merge)", "none"),
-				).
+				Description(videoFormatDescription).
+				Options(videoFormatOptions...).
 				Value(&defaultVideoFormat),
 		).WithHideFunc(func() bool { return defaultMode != "video" }),
 		huh.NewGroup(
 			huh.NewSelect[string]().
 				Key("audioFormat").
 				Title("Audio Format").
-				Description("Converted with ffmpeg via yt-dlp's audio extractor.").
-				Options(
-					huh.NewOption("Best (original)", "best"),
-					huh.NewOption("MP3", "mp3"),
-					huh.NewOption("FLAC", "flac"),
-					huh.NewOption("WAV", "wav"),
-					huh.NewOption("OGG (Vorbis)", "vorbis"),
-					huh.NewOption("M4A (AAC)", "m4a"),
-					huh.NewOption("Opus", "opus"),
-					huh.NewOption("ALAC", "alac"),
-				).
+				Description(audioFormatDescription).
+				Options(audioFormatOptions...).
 				Value(&defaultAudioFormat),
 		).WithHideFunc(func() bool { return defaultMode != "audio" }),
 	).WithTheme(huh.ThemeCharm())
@@ -281,12 +305,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		if m.form.State == huh.StateCompleted {
 			m.config = downloadConfig{
-				url:          m.form.GetString("url"),
-				dir:          m.form.GetString("dir"),
-				mode:         m.form.GetString("mode"),
-				videoQuality: defaultVideoQuality,
-				videoFormat:  defaultVideoFormat,
-				audioFormat:  defaultAudioFormat,
+				url:             m.form.GetString("url"),
+				dir:             m.form.GetString("dir"),
+				mode:            m.form.GetString("mode"),
+				videoQuality:    defaultVideoQuality,
+				videoFormat:     defaultVideoFormat,
+				audioFormat:     defaultAudioFormat,
+				ffmpegAvailable: ffmpegCheck.available,
 			}
 			m.state = stateDownloading
 			m.status = "Downloading..."
@@ -315,9 +340,9 @@ func (m model) View() string {
 	logo := gradientText("YT-DLP GUI", colorPink, colorPurple)
 
 	if m.state == stateConfig {
+		statusLines := toolStatusLines(ytdlpCheck, ffmpegCheck)
 		header := lipgloss.JoinVertical(lipgloss.Left,
-			logo,
-			subtitleStyle.Render("Download videos, beautifully."),
+			append([]string{logo, subtitleStyle.Render("Download videos, beautifully."), ""}, statusLines...)...,
 		)
 
 		footer := m.help.ShortHelpView([]key.Binding{keyQuitForm})
@@ -516,6 +541,16 @@ func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
 		fmt.Println("yt-dlp-gui " + version)
 		return
+	}
+
+	ytdlpCheck = checkYtDlp()
+	ffmpegCheck = checkFFmpeg()
+	if !ffmpegCheck.available {
+		// mp4/mkv/etc. and every non-"best" audio format require ffmpeg;
+		// fall back to the one option that doesn't so the pre-selected
+		// default always matches an option actually offered in the form.
+		defaultVideoFormat = "none"
+		defaultAudioFormat = "best"
 	}
 
 	m := initialModel()

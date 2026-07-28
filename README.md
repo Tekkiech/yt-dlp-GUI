@@ -12,8 +12,8 @@ A Charmbracelet-based TUI wrapper around the `yt-dlp` project with form-driven c
 
 ## Requirements
 - Go 1.21+ (module target is 1.26.1).
-- `yt-dlp` installed and on `PATH`.
-- FFmpeg on `PATH` for merging when enabled.
+- `yt-dlp` installed and on `PATH` — required; the app checks at startup and shows an OS/arch-specific install command if it's missing.
+- `ffmpeg` on `PATH` for format conversion (merging, MKV/WebM/MOV/AVI re-encoding, MP3/FLAC/WAV/etc. audio extraction). Also checked at startup: if missing, the app still works but only offers the original, unconverted format, with an install hint shown on screen.
 
 ## Install & Run
 ```/dev/null/commands.sh#L1-5
